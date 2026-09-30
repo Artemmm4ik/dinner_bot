@@ -12,16 +12,10 @@ def main_menu_kb(lang: str) -> ReplyKeyboardMarkup:
     )
 
 def settings_kb(lang: str) -> InlineKeyboardMarkup:
+    # We removed the Language button entirely from the settings.
+    # Currently it is empty or can contain other future settings.
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_text(lang, 'btn_lang'), callback_data="settings_lang")]
-    ])
-
-def lang_kb(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_text(lang, 'lang_auto'), callback_data="lang_auto")],
-        [InlineKeyboardButton(text=get_text(lang, 'lang_uk'), callback_data="lang_uk")],
-        [InlineKeyboardButton(text=get_text(lang, 'lang_ru'), callback_data="lang_ru")],
-        [InlineKeyboardButton(text=get_text(lang, 'btn_back'), callback_data="settings_main")]
+        # [InlineKeyboardButton(text="Placeholder for other settings", callback_data="placeholder")]
     ])
 
 def search_confirm_kb(lang: str) -> InlineKeyboardMarkup:

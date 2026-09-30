@@ -1,6 +1,6 @@
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery, TelegramObject, Update
+from aiogram.types import TelegramObject, Update
 from app.database.repo import repo
 from app.locales.manager import detect_language
 import logging
@@ -42,21 +42,24 @@ class UserLanguageMiddleware(BaseMiddleware):
         if not user:
             return await handler(event, data)
             
-        # Get from DB
-        db_user = await repo.get_user(user.id)
         tg_lang = detect_language(user.language_code)
         
+        # Get from DB
+        db_user = await repo.get_user(user.id)
+        
         if not db_user:
-            await repo.create_user(user.id, 'auto', tg_lang)
+            await repo.create_user(user.id, tg_language=tg_lang)
             lang = tg_lang
             db_user = await repo.get_user(user.id)
         else:
-            if db_user['language_mode'] == 'auto':
-                if db_user['last_tg_language'] != tg_lang:
-                    await repo.update_user_language(user.id, 'auto', tg_lang=tg_lang)
+            if user.language_code:
                 lang = tg_lang
+                if db_user.get('last_tg_language') != lang:
+                    await repo.update_user_language(user.id, tg_lang=lang)
+                    # Refresh db_user to include updated lang
+                    db_user = await repo.get_user(user.id)
             else:
-                lang = db_user['manual_language'] or 'uk'
+                lang = db_user.get('last_tg_language') or 'uk'
                 
         data["lang"] = lang
         data["db_user"] = db_user

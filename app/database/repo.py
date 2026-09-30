@@ -26,19 +26,17 @@ class DBRepo:
     async def get_user(self, user_id: int) -> Optional[dict]:
         return await self._fetchone("SELECT * FROM users WHERE user_id = $1", user_id)
 
-    async def create_user(self, user_id: int, language_mode: str = 'auto', tg_language: str = 'uk') -> None:
+    async def create_user(self, user_id: int, tg_language: str = 'uk') -> None:
+        # We still insert into old columns if they exist in schema just to avoid schema errors,
+        # but we only care about last_tg_language for the logic.
         await self._execute(
-            "INSERT INTO users (user_id, language_mode, last_tg_language) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING",
-            user_id, language_mode, tg_language
+            "INSERT INTO users (user_id, language_mode, last_tg_language) VALUES ($1, 'auto', $2) ON CONFLICT (user_id) DO NOTHING",
+            user_id, tg_language
         )
 
-    async def update_user_language(self, user_id: int, mode: str, manual_lang: Optional[str] = None, tg_lang: Optional[str] = None):
-        if manual_lang is not None:
-            await self._execute("UPDATE users SET language_mode = $1, manual_language = $2 WHERE user_id = $3", mode, manual_lang, user_id)
-        if tg_lang is not None:
-            await self._execute("UPDATE users SET language_mode = $1, last_tg_language = $2 WHERE user_id = $3", mode, tg_lang, user_id)
-        if manual_lang is None and tg_lang is None:
-            await self._execute("UPDATE users SET language_mode = $1 WHERE user_id = $2", mode, user_id)
+    async def update_user_language(self, user_id: int, tg_lang: str):
+        # Strictly update the language extracted from Telegram
+        await self._execute("UPDATE users SET last_tg_language = $1, language_mode = 'auto' WHERE user_id = $2", tg_lang, user_id)
 
     async def update_user_prefs(self, user_id: int, portions: int, max_time: Optional[int] = None, equipment: Optional[str] = None, vegetarian: bool = False):
         await self._execute(
