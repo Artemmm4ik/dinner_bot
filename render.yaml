@@ -1,22 +1,27 @@
 services:
-  - type: worker
+  - type: web
     name: dinner-bot
     env: python
     region: frankfurt
-    plan: starter
+    plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python -m app.main"
-    disk:
-      name: dinner_bot_data
-      mountPath: /var/data
-      sizeGB: 1
+    healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
+      - key: BOT_MODE
+        value: webhook
+      - key: PORT
+        value: 10000
       - key: BOT_TOKEN
         sync: false
-      - key: DATABASE_PATH
-        value: /var/data/dinner_bot.sqlite3
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: ADMIN_IDS
         sync: false
       - key: LOG_LEVEL

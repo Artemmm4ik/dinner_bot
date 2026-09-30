@@ -1,82 +1,95 @@
-import aiosqlite
+import asyncpg
 import logging
 from app.config import settings
-import os
 
 logger = logging.getLogger(__name__)
 
+pool = None
+
 async def init_db():
-    db_dir = os.path.dirname(settings.database_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-        
-    async with aiosqlite.connect(settings.database_path) as db:
-        await db.execute("""
+    global pool
+    # Neon recommended settings: smaller pool size, statement cache size limits.
+    pool = await asyncpg.create_pool(
+        settings.database_url,
+        min_size=1,
+        max_size=10,
+        command_timeout=30,
+        server_settings={'statement_timeout': '20000'}
+    )
+    
+    async with pool.acquire() as conn:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                language_mode TEXT DEFAULT 'auto',
-                manual_language TEXT,
-                last_tg_language TEXT,
+                user_id BIGINT PRIMARY KEY,
+                language_mode VARCHAR DEFAULT 'auto',
+                manual_language VARCHAR,
+                last_tg_language VARCHAR,
                 portions INTEGER DEFAULT 2,
                 max_time INTEGER,
                 equipment TEXT,
                 excluded_ingredients TEXT,
                 allergens TEXT,
-                vegetarian BOOLEAN DEFAULT 0,
+                vegetarian BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS shopping_list (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                ingredient_id TEXT,
-                ingredient_name TEXT,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                ingredient_id VARCHAR,
+                ingredient_name VARCHAR,
                 amount REAL,
-                unit TEXT,
-                is_bought BOOLEAN DEFAULT 0,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
+                unit VARCHAR,
+                is_bought BOOLEAN DEFAULT FALSE
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS favorites (
-                user_id INTEGER,
-                recipe_id TEXT,
-                PRIMARY KEY (user_id, recipe_id),
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
+                user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                recipe_id VARCHAR,
+                PRIMARY KEY (user_id, recipe_id)
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                recipe_id TEXT,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                recipe_id VARCHAR,
                 portions INTEGER,
                 rating INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS draft_state (
-                user_id INTEGER PRIMARY KEY,
-                state_data TEXT,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
+                user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                state_data TEXT
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS analytics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                event_name TEXT,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                event_name VARCHAR,
                 event_data TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.commit()
-        logger.info("Database initialized")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS processed_updates (
+                update_id BIGINT PRIMARY KEY,
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        logger.info("PostgreSQL database schema initialized")
 
-async def backup_db(backup_path: str):
-    async with aiosqlite.connect(settings.database_path) as src:
-        async with aiosqlite.connect(backup_path) as dst:
-            await src.backup(dst)
+async def get_db_pool():
+    if not pool:
+        await init_db()
+    return pool
+
+async def close_db():
+    global pool
+    if pool:
+        await pool.close()

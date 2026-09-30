@@ -1,8 +1,34 @@
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery, TelegramObject
+from aiogram.types import Message, CallbackQuery, TelegramObject, Update
 from app.database.repo import repo
 from app.locales.manager import detect_language
+import logging
+
+logger = logging.getLogger(__name__)
+
+class IdempotencyMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
+        event: Update,
+        data: Dict[str, Any]
+    ) -> Any:
+        update_id = event.update_id
+        
+        # Check if already processed
+        if await repo.is_update_processed(update_id):
+            logger.info(f"Update {update_id} already processed. Skipping.")
+            return None
+            
+        try:
+            result = await handler(event, data)
+            # Mark as processed only if successful
+            await repo.mark_update_processed(update_id)
+            return result
+        except Exception as e:
+            logger.error(f"Error processing update {update_id}: {e}")
+            raise
 
 class UserLanguageMiddleware(BaseMiddleware):
     async def __call__(
@@ -26,7 +52,6 @@ class UserLanguageMiddleware(BaseMiddleware):
             db_user = await repo.get_user(user.id)
         else:
             if db_user['language_mode'] == 'auto':
-                # Update tg_lang if changed
                 if db_user['last_tg_language'] != tg_lang:
                     await repo.update_user_language(user.id, 'auto', tg_lang=tg_lang)
                 lang = tg_lang

@@ -5,9 +5,15 @@ import json
 
 class Settings(BaseSettings):
     bot_token: str
-    database_path: str = "./data/dinner_bot.sqlite3"
     admin_ids: List[int] = Field(default_factory=list)
     log_level: str = "INFO"
+    
+    bot_mode: str = "polling" # 'polling' or 'webhook'
+    webhook_base_url: str | None = None
+    webhook_secret: str | None = None
+    database_url: str = "postgresql://user:password@localhost/dbname"
+    port: int = 10000
+    payments_enabled: bool = False
     
     llm_api_key: str | None = None
     llm_provider: str | None = None
