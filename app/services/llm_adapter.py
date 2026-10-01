@@ -4,10 +4,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 async def parse_with_llm(text: str) -> Optional[Dict[str, Any]]:
     if not settings.llm_api_key:
         return None
-        
+
     # Placeholder for LLM parsing
     # If implemented, it should call the OpenAI API (or other) and return a structured JSON response.
     # We will return None so it falls back to basic parsing if LLM is not actually configured.

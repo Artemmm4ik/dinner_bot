@@ -1,15 +1,15 @@
 services:
   - type: web
     name: dinner-bot
-    env: python
+    runtime: python
     region: frankfurt
     plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python -m app.main"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.main
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.0
+        value: 3.12.14
       - key: BOT_MODE
         value: webhook
       - key: PORT
@@ -19,10 +19,14 @@ services:
       - key: WEBHOOK_BASE_URL
         sync: false
       - key: WEBHOOK_SECRET
-        sync: false
+        generateValue: true
       - key: DATABASE_URL
         sync: false
-      - key: ADMIN_IDS
+      - key: SUPPORT_CONTACT
         sync: false
-      - key: LOG_LEVEL
-        value: INFO
+      - key: ADMIN_IDS
+        value: '[]'
+      - key: PAYMENTS_ENABLED
+        value: 'false'
+      - key: STARS_PRICE
+        value: '149'

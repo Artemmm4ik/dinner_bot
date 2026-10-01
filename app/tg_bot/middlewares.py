@@ -1,67 +1,34 @@
-from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, Update
+from aiogram.exceptions import TelegramBadRequest
 from app.database.repo import repo
 from app.locales.manager import detect_language
-import logging
 
-logger = logging.getLogger(__name__)
-
-class IdempotencyMiddleware(BaseMiddleware):
-    async def __call__(
-        self,
-        handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
-        event: Update,
-        data: Dict[str, Any]
-    ) -> Any:
-        update_id = event.update_id
-        
-        # Check if already processed
-        if await repo.is_update_processed(update_id):
-            logger.info(f"Update {update_id} already processed. Skipping.")
-            return None
-            
-        try:
-            result = await handler(event, data)
-            # Mark as processed only if successful
-            await repo.mark_update_processed(update_id)
-            return result
-        except Exception as e:
-            logger.error(f"Error processing update {update_id}: {e}")
-            raise
 
 class UserLanguageMiddleware(BaseMiddleware):
-    async def __call__(
-        self,
-        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
-        event: TelegramObject,
-        data: Dict[str, Any]
-    ) -> Any:
-        
-        user = data.get("event_from_user")
+    async def __call__(self, handler, event, data):
+        # End Telegram's spinner before DB-heavy processing. An expired old callback
+        # must not prevent the action itself from being handled.
+        if hasattr(event, "data"):
+            try:
+                await event.answer()
+            except TelegramBadRequest:
+                pass
+        user = event.from_user
         if not user:
-            return await handler(event, data)
-            
-        tg_lang = detect_language(user.language_code)
-        
-        # Get from DB
-        db_user = await repo.get_user(user.id)
-        
-        if not db_user:
-            await repo.create_user(user.id, tg_language=tg_lang)
-            lang = tg_lang
-            db_user = await repo.get_user(user.id)
-        else:
-            if user.language_code:
-                lang = tg_lang
-                if db_user.get('last_tg_language') != lang:
-                    await repo.update_user_language(user.id, tg_lang=lang)
-                    # Refresh db_user to include updated lang
-                    db_user = await repo.get_user(user.id)
-            else:
-                lang = db_user.get('last_tg_language') or 'uk'
-                
+            return
+        chat = getattr(event, "chat", None) or getattr(
+            getattr(event, "message", None), "chat", None
+        )
+        if chat and chat.type != "private":
+            return
+        current = await repo.get_user(user.id)
+        lang = (
+            detect_language(user.language_code)
+            if user.language_code
+            else (current or {}).get("last_tg_language") or "uk"
+        )
+        await repo.create_user(user.id, lang)
+        if not current or current["last_tg_language"] != lang:
+            await repo.update_user_language(user.id, lang)
         data["lang"] = lang
-        data["db_user"] = db_user
-        
         return await handler(event, data)

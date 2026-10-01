@@ -1,77 +1,119 @@
+from copy import deepcopy
 import pytest
-from app.services.parser import parse_input
-from app.services.matcher import match_recipes
-from app.services.recipe_catalog import catalog
+from app.services.planner import (
+    defaults,
+    identify,
+    parse,
+    rank,
+    make_plan,
+    replacement,
+    groceries,
+    eligible,
+)
+from app.services.recipe_data import RECIPES, INGREDIENTS
 from app.locales.manager import detect_language
 
-def test_language_detection():
-    assert detect_language('uk') == 'uk'
-    assert detect_language('uk-UA') == 'uk'
-    assert detect_language('ru') == 'ru'
-    assert detect_language('ru-RU') == 'ru'
-    assert detect_language('en') == 'uk'  # default fallback
-    assert detect_language(None) == 'uk'
 
-def test_parser_basic():
-    text = "Є картопля, яйця, сир і курка. На двох, максимум 25 хвилин, духовки немає."
-    res = parse_input(text)
-    assert res['portions'] == 2
-    assert res['max_time'] == 25
-    assert "духовка" not in res['equipment']
-    assert "картопля" in res['ingredients']
-    assert "яйця" in res['ingredients']
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        ("uk", "uk"),
+        ("uk-UA", "uk"),
+        ("ru", "ru"),
+        ("ru-RU", "ru"),
+        ("en", "uk"),
+        (None, "uk"),
+    ],
+)
+def test_language(code, expected):
+    assert detect_language(code) == expected
 
-def test_parser_ru():
-    text = "Есть картошка, яйца, сыр. На 4, максимум 30 минут, без духовки"
-    res = parse_input(text)
-    assert res['portions'] == 4
-    assert res['max_time'] == 30
-    assert "картошка" in res['ingredients']
-    assert "яйца" in res['ingredients']
-    
-def test_matcher():
-    recipes = [
-        {
-            "id": "1",
-            "title": {"uk": "Тест 1", "ru": "Тест 1"},
-            "total_time": 20,
-            "vegetarian": True,
-            "equipment": ["плита"],
-            "ingredients": [
-                {"req": True, "name_uk": "картопля", "name_ru": "картошка"},
-                {"req": True, "name_uk": "яйце", "name_ru": "яйцо"}
-            ]
-        },
-        {
-            "id": "2",
-            "title": {"uk": "Тест 2", "ru": "Тест 2"},
-            "total_time": 40,
-            "vegetarian": False,
-            "equipment": ["духовка"],
-            "ingredients": [
-                {"req": True, "name_uk": "курка", "name_ru": "курица"}
-            ]
-        }
-    ]
-    
-    # Test time limit
-    res1 = match_recipes(["картопля", "яйце"], max_time=25, equipment=["плита", "духовка"], excluded=[], vegetarian=False, catalog=recipes, lang='uk')
-    assert len(res1) == 1
-    assert res1[0]['id'] == "1"
-    
-    # Test equipment limit
-    res2 = match_recipes(["курка"], max_time=50, equipment=["плита"], excluded=[], vegetarian=False, catalog=recipes, lang='uk')
-    assert len(res2) == 1  # No oven
 
-    # Test vegetarian limit
-    res3 = match_recipes(["курка"], max_time=50, equipment=["плита", "духовка"], excluded=[], vegetarian=True, catalog=recipes, lang='uk')
-    assert len(res3) == 1  # Not vegetarian
-    
-def test_catalog_validity():
-    all_recipes = catalog.get_all()
-    assert len(all_recipes) == 30
-    for r in all_recipes:
-        assert 'id' in r
-        assert 'title' in r and 'uk' in r['title'] and 'ru' in r['title']
-        assert 'ingredients' in r
-        assert 'steps' in r and 'uk' in r['steps']
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("картошка, яйца, сыр", {"potato", "egg", "cheese"}),
+        ("картопля, яйця, курка", {"potato", "egg", "chicken"}),
+        ("помидоры, огурцы, фета", {"tomato", "cucumber", "feta"}),
+        ("", set()),
+    ],
+)
+def test_ingredient_recognition(text, expected):
+    assert set(identify(text)) == expected
+
+
+def test_parser_conditions_and_pantry_separation():
+    p = parse("Картошка, яйца. На 4, максимум 30 минут, без духовки", defaults())
+    assert p["portions"] == 4 and p["minutes"] == 30
+    assert "oven" not in p["equipment"]
+    assert p["pantry"] == ["egg", "potato"]
+
+
+def test_catalog_has_real_unique_recipes():
+    assert len(RECIPES) == 36
+    assert len({r["id"] for r in RECIPES}) == 36
+    assert len({r["title"]["ru"] for r in RECIPES}) == 36
+    for r in RECIPES:
+        assert r["ingredients"] and r["steps"]["ru"] and r["steps"]["uk"]
+        assert not r["title"]["ru"].startswith("Рецепт ")
+        for i in r["ingredients"]:
+            assert i["amount"] > 0 and i["id"] in INGREDIENTS
+        expected = {INGREDIENTS[i["id"]][4] for i in r["ingredients"]} - {""}
+        assert set(r["allergens"]) == expected
+
+
+def test_strict_allergy_time_equipment_and_exclusion_filters():
+    p = defaults()
+    p.update(
+        minutes=30,
+        equipment=["stove"],
+        allergens=["milk", "egg"],
+        exclude=["tomato"],
+        vegetarian=True,
+    )
+    for r in eligible(p):
+        assert not set(r["allergens"]) & {"milk", "egg"}
+        assert (
+            r["vegetarian"]
+            and r["total_time"] <= 30
+            and set(r["equipment"]) <= {"stove"}
+        )
+        assert "tomato" not in {i["id"] for i in r["ingredients"]}
+
+
+def test_ranking_does_not_recommend_unrelated_food():
+    p = defaults()
+    p["pantry"] = ["chicken"]
+    result = rank(p)
+    assert result and all(
+        "chicken" in {i["id"] for i in r["ingredients"]} for r in result
+    )
+
+
+@pytest.mark.parametrize("mode", ["compact", "variety"])
+@pytest.mark.parametrize("days", [3, 5, 7])
+def test_plan_distinct_and_valid(mode, days):
+    p = defaults()
+    p["allergens"] = ["milk"]
+    p["exclude"] = ["fish"]
+    before = deepcopy(p)
+    plan = make_plan(p, days, mode)
+    assert p == before
+    assert len(set(plan["recipes"])) == days
+    assert set(plan["recipes"]) <= {r["id"] for r in eligible(p)}
+    swap = replacement(plan, 0)
+    assert swap not in plan["recipes"]
+
+
+def test_impossible_plan_does_not_relax_restrictions():
+    p = defaults()
+    p["minutes"] = 1
+    with pytest.raises(ValueError):
+        make_plan(p, 7, "compact")
+
+
+def test_shopping_aggregates_and_scales():
+    items = {i["id"]: i for i in groceries(["eggs_1", "omelet_1"], 4)}
+    assert items["egg"]["amount"] == 16
+    assert items["oil"]["amount"] == 30
+    assert items["tomato"]["amount"] == 500
